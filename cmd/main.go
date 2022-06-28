@@ -64,36 +64,32 @@ func run() error {
 		go func(q *query.JobSearch, index int) error {
 			defer swg.Done()
 
-			fmt.Printf("Starting query: %d \n", index)
+			fmt.Printf("Starting execution and export to CSV of search job: %d \n", index)
 			err = q.ExecuteSearchJob()
 
 			if err != nil {
 				errs <- err
 			}
 
-			err = q.RefreshSearchJobState()
-			if err != nil {
-				errs <- err
-			}
-
-			fmt.Printf("Query %d complete, total messages returned: %d \n", index, q.JobState.MessageCount)
 			err = q.ExportToCSV()
+			fmt.Printf("Export complete for search job %d, total messages exported: %d \n", index, q.JobState.MessageCount)
 
-			if err != nil {
-				errs <- err
-			}
-
-			fmt.Printf("Export complete for query: %d \n", index)
-			err = q.DeleteSearchJob()
 			if err != nil {
 				errs <- err
 			}
 
 			if conf.S3.Enabled {
+				fmt.Printf("Uploading files for search job: %d \n", index)
 				err = q.UploadFileToS3()
+				fmt.Printf("S3 upload complete for search job: %d \n", index)
 				if err != nil {
 					errs <- err
 				}
+			}
+
+			err = q.DeleteSearchJob()
+			if err != nil {
+				errs <- err
 			}
 
 			return nil
@@ -154,7 +150,7 @@ func splitByDay(startTime string, endTime string) ([]*query.JobSearch, error) {
 }
 
 func createQuery(startDate, endDate string) *query.JobSearch {
-	return query.NewQuery(conf.Sumo.ApiURL, conf.ACCESS_ID, conf.ACCESS_KEY, conf.AWS_REGION, conf.S3.Bucket, conf.S3.Enabled, conf.S3.DeleteOnUpload, conf.Filename+"_"+conf.Sumo.Query.StartDate+".csv", conf.Sumo.Query.Statement, startDate, endDate, conf.Sumo.Query.TimeZone)
+	return query.NewQuery(conf.Sumo.ApiURL, conf.ACCESS_ID, conf.ACCESS_KEY, conf.AWS_REGION, conf.S3.Bucket, conf.S3.Enabled, conf.S3.DeleteOnUpload, conf.Filename+"_"+startDate+".csv", conf.Sumo.Query.Statement, startDate, endDate, conf.Sumo.Query.TimeZone)
 }
 
 func init() {

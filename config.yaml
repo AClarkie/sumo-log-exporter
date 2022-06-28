@@ -1,4 +1,4 @@
-concurrency: 10
+concurrency: 5
 sumo:
   apiUrl: "https://api.eu.sumologic.com/api/v1/search/jobs"
   query:

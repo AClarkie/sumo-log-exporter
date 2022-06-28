@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 type JobSearch struct {
@@ -155,42 +156,37 @@ func (j *JobSearch) ExecuteSearchJob() error {
 	return nil
 }
 
-func (j *JobSearch) RefreshSearchJobState() error {
+func (j *JobSearch) refreshSearchJobState() error {
 
 	if j.JobState == nil {
 		return fmt.Errorf("could not refresh search job state as it's not been started")
 	}
 
-	for ok := true; ok; ok = (j.JobState.State != "DONE GATHERING RESULTS") {
+	response, err := j.get(j.ApiEndpoint+"/"+j.JobState.ID, nil, nil)
+	if err != nil {
+		return err
+	}
 
-		response, err := j.get(j.ApiEndpoint+"/"+j.JobState.ID, nil, nil)
-		if err != nil {
-			return err
-		}
+	if response.StatusCode != 200 {
+		return fmt.Errorf("could not refresh search job: %s", response.Status)
+	}
 
-		if response.StatusCode != 200 {
-			return fmt.Errorf("could not delete search job: %s", response.Status)
-		}
+	var bdy []byte
+	if response.StatusCode == 200 {
+		bdy, _ = ioutil.ReadAll(response.Body)
+	} else {
+		return fmt.Errorf("%s", response.Status)
+	}
 
-		var bdy []byte
-		if response.StatusCode == 200 {
-			bdy, _ = ioutil.ReadAll(response.Body)
-		} else {
-			return fmt.Errorf("%s", response.Status)
-		}
-
-		err = json.Unmarshal(bdy, &j.JobState)
-		if err != nil {
-			return fmt.Errorf("could not unmarshal response body: %s", err)
-		}
-		time.Sleep(5 * time.Second)
+	err = json.Unmarshal(bdy, &j.JobState)
+	if err != nil {
+		return fmt.Errorf("could not unmarshal response body: %s", err)
 	}
 
 	return nil
-
 }
 
-func (j *JobSearch) GetMessageBatch(query map[string]string) error {
+func (j *JobSearch) getMessageBatch(query map[string]string) error {
 	response, err := j.get(j.ApiEndpoint+"/"+j.JobState.ID+"/"+"messages", nil, query)
 	if err != nil {
 		return err
@@ -228,7 +224,7 @@ func (j *JobSearch) DeleteSearchJob() error {
 }
 
 func (j *JobSearch) ExportToCSV() error {
-	var limit = "1000"
+	var limit = "10000"
 	var offset = 0
 	var written = 0
 
@@ -252,7 +248,7 @@ func (j *JobSearch) ExportToCSV() error {
 	for {
 		query := map[string]string{"limit": limit, "offset": fmt.Sprintf("%d", offset)}
 
-		err := j.GetMessageBatch(query)
+		err := j.getMessageBatch(query)
 		if err != nil {
 			return err
 		}
@@ -274,9 +270,18 @@ func (j *JobSearch) ExportToCSV() error {
 
 		// Continue if there are more messages to receive.
 		if written < j.JobState.MessageCount {
-			offset += 1000
+			offset += len(*j.JobMessageSlice)
 		} else {
-			break
+			// If we're still collecting results then wait for job search to finish
+			j.refreshSearchJobState()
+			if j.JobState.State != "DONE GATHERING RESULTS" {
+				time.Sleep(2 * time.Second)
+				offset += len(*j.JobMessageSlice)
+			} else if written >= j.JobState.MessageCount {
+				break
+			} else {
+				offset += len(*j.JobMessageSlice)
+			}
 		}
 	}
 
@@ -284,13 +289,6 @@ func (j *JobSearch) ExportToCSV() error {
 }
 
 func (j *JobSearch) UploadFileToS3() error {
-	session, err := session.NewSession(&aws.Config{Region: aws.String(j.S3Config.AWSRegion)})
-	if err != nil {
-		return fmt.Errorf("could not initialize new aws session: %v", err)
-	}
-
-	s3Client := s3.New(session)
-
 	fileName := filepath.Base(j.Filename)
 	upFile, err := os.Open(j.Filename)
 	if err != nil {
@@ -298,25 +296,30 @@ func (j *JobSearch) UploadFileToS3() error {
 	}
 	defer upFile.Close()
 
-	upFileInfo, _ := upFile.Stat()
-	var fileSize int64 = upFileInfo.Size()
-	fileBuffer := make([]byte, fileSize)
-	upFile.Read(fileBuffer)
+	session, err := session.NewSession(&aws.Config{Region: aws.String(j.S3Config.AWSRegion)})
+	if err != nil {
+		return fmt.Errorf("could not initialize new aws session: %v", err)
+	}
 
-	// Put the file object to s3 with the file name
-	_, err = s3Client.PutObject(&s3.PutObjectInput{
-		Bucket:             aws.String(j.S3Config.Bucket),
-		Key:                aws.String(fileName),
-		ACL:                aws.String("private"),
-		Body:               bytes.NewReader(fileBuffer),
-		ContentLength:      aws.Int64(fileSize),
-		ContentType:        aws.String(http.DetectContentType(fileBuffer)),
-		ContentDisposition: aws.String("attachment"),
+	s3Client := s3.New(session)
+	uploader := s3manager.NewUploaderWithClient(s3Client, func(u *s3manager.Uploader) {
+		u.PartSize = 100 * 1024 * 1024 // 100MB part size
+		u.Concurrency = 10
+		u.LeavePartsOnError = true // Don't delete the parts if the upload fails.
 	})
+	upParams := &s3manager.UploadInput{
+		Bucket: &j.S3Config.Bucket,
+		Key:    &fileName,
+		Body:   upFile,
+	}
+
+	// Perform an upload.
+	result, err := uploader.Upload(upParams)
 
 	if err != nil {
 		return fmt.Errorf("error uploading file [%v]: %+v", j.Filename, err)
 	}
+	fmt.Printf("file uploaded to, %s\n", result.Location)
 
 	if j.S3Config.DeleteOnUpload {
 		err = os.Remove(fileName)
