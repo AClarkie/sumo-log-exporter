@@ -21,7 +21,7 @@ A config file exists at the root with the following options:
 | filename | string | `nil` | The base filename for the CSV |
 | s3.enabled | bool | `false` | Specifies whether files should be uploaded to s3 |
 | s3.bucket | string | `nil` | The name of the bucket to upload to |
-| s3.deleteOnUpload | `false` | Specifies whether files should be deleted locally after upload |
+| s3.deleteOnUpload | bool | `false` | Specifies whether files should be deleted locally after upload |
 
 The following can be set in `config.yaml` or as environment variables:
 
