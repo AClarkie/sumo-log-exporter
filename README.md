@@ -12,12 +12,12 @@ A config file exists at the root with the following options:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| concurrency | int | 5 | Number of goroutines to use when querying, e.g. if 5, 5 days worth of logs will be retrieved concurrently |
-| sumo.apiUrl | string | `https://api.eu.sumologic.com/api/v1/search/jobs` | Base sumologic api endpoint to use, differs per region  |
+| concurrency | int | 5 | Number of days concurrent queries to run |
+| sumo.apiUrl | string | `nil` | Base sumologic api endpoint to use, differs per region  |
 | sumo.query.statement | string | `nil` | The query to execute |
-| sumo.query.statement | string | `nil` | The query to execute |
-| sumo.query.statement | string | `nil` | The query to execute |
-| sumo.query.timeZone | string | `GMT` | The query to execute |
+| sumo.query.startDate | string | `nil` | The query start date, format is 2022-06-20T00:00:00 |
+| sumo.query.endDate | string | `nil` | The query end date, format is 2022-06-20T00:00:00 |
+| sumo.query.timeZone | string | `GMT` | The query timezone |
 | filename | string | `nil` | The base filename for the CSV |
 | s3.enabled | bool | `false` | Specifies whether files should be uploaded to s3 |
 | s3.bucket | string | `nil` | The name of the bucket to upload to |
